@@ -10,6 +10,10 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Aeson
+import Data.Aeson.Internal (IResult(..), formatError, ifromJSON)
+import Data.Aeson.Parser.Internal (eitherDecodeStrictWith, jsonEOF)
+import Data.Aeson.Types
+import qualified Data.ByteString as BS
 import Data.HashMap.Strict
 import Data.List
 import Data.Maybe
@@ -37,7 +41,7 @@ pathType p = do
             (name, ".json") -> (Text.pack $ name, JSON)
             _               -> (Text.pack $ takeFileName p, TextFile)
 
-decodeDirectoryValue :: MonadIO io => FilePath -> io (Either String Value)
+decodeDirectoryValue :: MonadIO io => FilePath -> io (IResult Value)
 decodeDirectoryValue path = liftIO $ do
     time <- getModificationTime path
     ents <- listDirectory path
@@ -47,17 +51,27 @@ decodeDirectoryValue path = liftIO $ do
         else Just <$> do
             let path' = path </> ent
             pathType path' >>= \case
-                (n, Directory) -> (n,) <$> decodeDirectoryValue path'
-                (n, JSON     ) -> (n,) <$> eitherDecodeFileStrict path'
-                (n, TextFile ) -> (n,) . Right . String <$> Text.readFile path'
+                (n, Directory) -> (n,) . addContext n <$> decodeDirectoryValue path'
+                (n, JSON     ) -> (n,) . addContext n <$> idecodeFileStrict path'
+                (n, TextFile ) -> (n,) . ISuccess . String <$> Text.readFile path'
     time2 <- getModificationTime path
     unless (time == time2) $ throwIO (ModifiedWhileReading path)
-
     pure $ Object <$> sequence (Data.HashMap.Strict.fromList kvs)
 
-resultToEither :: Result a -> Either String a
-resultToEither (Success a) = Right a
-resultToEither (Error s)   = Left s
+addContext :: Text -> IResult a -> IResult a
+addContext c (IError p s) = IError (Key c : p) s
+addContext _ x = x
+
+idecodeFileStrict :: (FromJSON a) => FilePath -> IO (IResult a)
+idecodeFileStrict =
+    fmap (toIResult . eitherDecodeStrictWith jsonEOF ifromJSON) . BS.readFile
+  where
+    toIResult (Left (p, s)) = IError p s
+    toIResult (Right a) = ISuccess a
+
+resultToEither :: IResult a -> Either String a
+resultToEither (ISuccess a) = Right a
+resultToEither (IError p s) = Left $ formatError p s
 
 -- | Takes a directory and decodes it using a @`FromJSON`@ instance.
 -- Each entry in the directory becomes a key, and the contents become
@@ -72,6 +86,6 @@ resultToEither (Error s)   = Left s
 decodeDirectory :: (FromJSON a, MonadIO io) => FilePath -> io (Either String a)
 decodeDirectory p = do
     ev <- decodeDirectoryValue p
-    pure $ do
+    pure . resultToEither $ do
         v <- ev
-        resultToEither $ fromJSON v
+        ifromJSON v

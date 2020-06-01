@@ -3,7 +3,15 @@
 {-# LANGUAGE BlockArguments #-}
 module Data.JSON.Directory
     ( decodeDirectory
+    , decodeDirectory'
+    , Rule(..)
+    , IResult(..)
+    , defaultRules
+    , jsonRule
+    , textRule
+    , idecodeStrict
     , ModifiedWhileReading
+    , NoRuleFor
     ) where
 
 import Control.Exception
@@ -23,22 +31,31 @@ import qualified Data.Text.IO as Text
 import System.Directory
 import System.FilePath
 
+-- Exception is thrown if the files changed while we were
+-- reading them.
 data ModifiedWhileReading = ModifiedWhileReading FilePath
     deriving (Show)
 
 instance Exception ModifiedWhileReading
 
+-- Exception thrown if no rule was specified for a given file.
 data NoRuleFor = NoRuleFor FilePath
     deriving Show
 
 instance Exception NoRuleFor
 
+-- | How to interpret a file.
 data Rule = Rule
     { predicate :: FilePath -> Bool
+        -- ^ A predicate to see if this rule applies.
     , jsonKey   :: FilePath -> Text
+        -- ^ A function to transform the filename into a JSON key value
     , parser    :: FilePath -> IO (IResult Value)
+        -- ^ Turn a file into a Value.  The @JSONPath@ in the @IResult@ will be
+        -- merged into the correct location.
     }
 
+-- | A rule that reads @.json@ files as JSON.
 jsonRule :: Rule
 jsonRule = Rule
     { predicate = isSuffixOf ".json"
@@ -46,6 +63,7 @@ jsonRule = Rule
     , parser    = idecodeFileStrict
     }
 
+-- | A rule that reads any file into a JSON string.
 textRule :: Rule
 textRule = Rule
     { predicate = const True
@@ -53,6 +71,8 @@ textRule = Rule
     , parser    = fmap (ISuccess . String) . Text.readFile
     }
 
+-- | Some sane default rules. Attempts do do @`jsonRule`@ and falls back to
+-- @`textRule`@
 defaultRules :: [Rule]
 defaultRules = [jsonRule, textRule]
 
@@ -95,6 +115,12 @@ idecodeFileStrict =
     toIResult (Left (p, s)) = IError p s
     toIResult (Right a) = ISuccess a
 
+idecodeStrict :: (FromJSON a) => BS.ByteString -> IResult a
+idecodeStrict = toIResult . eitherDecodeStrictWith jsonEOF ifromJSON
+  where
+    toIResult (Left (p, s)) = IError p s
+    toIResult (Right a) = ISuccess a
+
 resultToEither :: IResult a -> Either String a
 resultToEither (ISuccess a) = Right a
 resultToEither (IError p s) = Left $ formatError p s
@@ -109,9 +135,12 @@ resultToEither (IError p s) = Left $ formatError p s
 --
 -- This function can throw IO exceptions as well as a @`ModifiedWhileReading`@
 -- exception if the modification time changes during processing.
+--
+-- Uses @`defaultRules`@
 decodeDirectory :: (FromJSON a, MonadIO io) => FilePath -> io (Either String a)
 decodeDirectory = decodeDirectory' defaultRules
 
+-- | Like @`decodeDirectory`@ but you get to specify the rules.
 decodeDirectory' :: (FromJSON a, MonadIO io) => [Rule] -> FilePath -> io (Either String a)
 decodeDirectory' rules p = do
     ev <- decodeDirectoryValue rules p

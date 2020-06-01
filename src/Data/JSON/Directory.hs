@@ -28,21 +28,48 @@ data ModifiedWhileReading = ModifiedWhileReading FilePath
 
 instance Exception ModifiedWhileReading
 
+data NoRuleFor = NoRuleFor FilePath
+    deriving Show
+
+instance Exception NoRuleFor
+
+data Rule = Rule
+    { predicate :: FilePath -> Bool
+    , jsonKey   :: FilePath -> Text
+    , parser    :: FilePath -> IO (IResult Value)
+    }
+
+jsonRule :: Rule
+jsonRule = Rule
+    { predicate = isSuffixOf ".json"
+    , jsonKey   = Text.pack . takeBaseName
+    , parser    = idecodeFileStrict
+    }
+
+textRule :: Rule
+textRule = Rule
+    { predicate = const True
+    , jsonKey   = Text.pack . takeFileName
+    , parser    = fmap (ISuccess . String) . Text.readFile
+    }
+
+defaultRules :: [Rule]
+defaultRules = [jsonRule, textRule]
+
 data EntryType
     = Directory
-    | JSON
-    | TextFile
+    | File (FilePath -> IO (IResult Value))
 
-pathType :: FilePath -> IO (Text, EntryType)
-pathType p = do
+pathType :: [Rule] -> FilePath -> IO (Text, EntryType)
+pathType rules p = do
     doesDirectoryExist p >>= \case
         True -> pure (Text.pack $ takeFileName p, Directory)
-        False -> pure case splitExtension (takeFileName p) of
-            (name, ".json") -> (Text.pack $ name, JSON)
-            _               -> (Text.pack $ takeFileName p, TextFile)
+        False -> case find (\r -> predicate r p) rules of
+            Nothing   -> throwIO $ NoRuleFor p
+            Just rule -> pure (jsonKey rule p, File (parser rule))
 
-decodeDirectoryValue :: MonadIO io => FilePath -> io (IResult Value)
-decodeDirectoryValue path = liftIO $ do
+decodeDirectoryValue :: MonadIO io => [Rule] -> FilePath -> io (IResult Value)
+decodeDirectoryValue rules path = liftIO $ do
     time <- getModificationTime path
     ents <- listDirectory path
     kvs <- catMaybes <$> forM ents \ent -> do
@@ -50,10 +77,9 @@ decodeDirectoryValue path = liftIO $ do
         then pure Nothing
         else Just <$> do
             let path' = path </> ent
-            pathType path' >>= \case
-                (n, Directory) -> (n,) . addContext n <$> decodeDirectoryValue path'
-                (n, JSON     ) -> (n,) . addContext n <$> idecodeFileStrict path'
-                (n, TextFile ) -> (n,) . ISuccess . String <$> Text.readFile path'
+            pathType rules path' >>= \case
+                (n, Directory) -> (n,) . addContext n <$> decodeDirectoryValue rules path'
+                (n, File parser) -> (n,) . addContext n <$> parser path'
     time2 <- getModificationTime path
     unless (time == time2) $ throwIO (ModifiedWhileReading path)
     pure $ Object <$> sequence (Data.HashMap.Strict.fromList kvs)
@@ -84,8 +110,11 @@ resultToEither (IError p s) = Left $ formatError p s
 -- This function can throw IO exceptions as well as a @`ModifiedWhileReading`@
 -- exception if the modification time changes during processing.
 decodeDirectory :: (FromJSON a, MonadIO io) => FilePath -> io (Either String a)
-decodeDirectory p = do
-    ev <- decodeDirectoryValue p
+decodeDirectory = decodeDirectory' defaultRules
+
+decodeDirectory' :: (FromJSON a, MonadIO io) => [Rule] -> FilePath -> io (Either String a)
+decodeDirectory' rules p = do
+    ev <- decodeDirectoryValue rules p
     pure . resultToEither $ do
         v <- ev
         ifromJSON v

@@ -1,7 +1,7 @@
 # JSON Directory
 
 [![](https://img.shields.io/hackage/v/shh.svg?colorB=%23999&label=shh)](http://hackage.haskell.org/package/json-directory)
-[![](https://builds.sr.ht/~lukec/json-directory/commits/nix.yml.svg)](https://builds.sr.ht/~lukec/json-directoryh/commits/nix.yml)
+[![](https://builds.sr.ht/~lukec/json-directory/commits/nix.yml.svg)](https://builds.sr.ht/~lukec/json-directory/commits/nix.yml)
 
 Provides utilities for reading JSON structures out of directories. Directory
 entries become keys in a map, and the values are sourced from the contets of

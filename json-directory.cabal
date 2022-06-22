@@ -1,7 +1,7 @@
 cabal-version:       2.2
 
 name:                json-directory
-version:             0.1.0.1
+version:             0.1.0.2
 category:            Codec
 synopsis:            Load JSON from files in a directory structure
 description:         Load JSON from files in a directory structure. The object

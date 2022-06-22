@@ -23,6 +23,8 @@ import Data.Aeson.Parser.Internal (eitherDecodeStrictWith, jsonEOF)
 import Data.Aeson.Types
 import qualified Data.ByteString as BS
 import Data.HashMap.Strict
+import Data.Aeson.KeyMap
+import Data.Aeson.Key
 import Data.List
 import Data.Maybe
 import Data.Text (Text)
@@ -48,7 +50,7 @@ instance Exception NoRuleFor
 data Rule = Rule
     { predicate :: FilePath -> Bool
         -- ^ A predicate to see if this rule applies.
-    , jsonKey   :: FilePath -> Text
+    , jsonKey   :: FilePath -> Key
         -- ^ A function to transform the filename into a JSON key value
     , parser    :: FilePath -> IO (IResult Value)
         -- ^ Turn a file into a Value.  The @JSONPath@ in the @IResult@ will be
@@ -59,7 +61,7 @@ data Rule = Rule
 jsonRule :: Rule
 jsonRule = Rule
     { predicate = isSuffixOf ".json"
-    , jsonKey   = Text.pack . takeBaseName
+    , jsonKey   = Data.Aeson.Key.fromString . takeBaseName
     , parser    = idecodeFileStrict
     }
 
@@ -67,7 +69,7 @@ jsonRule = Rule
 textRule :: Rule
 textRule = Rule
     { predicate = const True
-    , jsonKey   = Text.pack . takeFileName
+    , jsonKey   = Data.Aeson.Key.fromString . takeFileName
     , parser    = fmap (ISuccess . String) . Text.readFile
     }
 
@@ -80,10 +82,10 @@ data EntryType
     = Directory
     | File (FilePath -> IO (IResult Value))
 
-pathType :: [Rule] -> FilePath -> IO (Text, EntryType)
+pathType :: [Rule] -> FilePath -> IO (Key, EntryType)
 pathType rules p = do
     doesDirectoryExist p >>= \case
-        True -> pure (Text.pack $ takeFileName p, Directory)
+        True -> pure (Data.Aeson.Key.fromString $ takeFileName p, Directory)
         False -> case find (\r -> predicate r p) rules of
             Nothing   -> throwIO $ NoRuleFor p
             Just rule -> pure (jsonKey rule p, File (parser rule))
@@ -102,9 +104,9 @@ decodeDirectoryValue rules path = liftIO $ do
                 (n, File parser) -> (n,) . addContext n <$> parser path'
     time2 <- getModificationTime path
     unless (time == time2) $ throwIO (ModifiedWhileReading path)
-    pure $ Object <$> sequence (Data.HashMap.Strict.fromList kvs)
+    pure $ Object <$> sequence (Data.Aeson.KeyMap.fromList kvs)
 
-addContext :: Text -> IResult a -> IResult a
+addContext :: Key -> IResult a -> IResult a
 addContext c (IError p s) = IError (Key c : p) s
 addContext _ x = x
 

@@ -8,6 +8,7 @@ import Control.Monad
 import Control.Monad.Writer
 import Control.Monad.Except
 import Data.Aeson
+import Data.Aeson.Key
 import Data.Foldable
 import Data.JSON.Directory
 import Data.List (isSuffixOf)
@@ -27,7 +28,7 @@ parseArgs b c ("--rule":rest) = case rest of
         let
             rule = Rule
                 { predicate = isSuffixOf pat
-                , jsonKey   = Text.pack . takeBaseName
+                , jsonKey   = Data.Aeson.Key.fromString . takeBaseName
                 , parser    =
                     let
                         parse fp = do

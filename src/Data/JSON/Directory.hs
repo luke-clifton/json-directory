@@ -18,7 +18,6 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Aeson
-import Data.Aeson.Internal (IResult(..), formatError, ifromJSON)
 import Data.Aeson.Parser.Internal (eitherDecodeStrictWith, jsonEOF)
 import Data.Aeson.Types
 import qualified Data.ByteString as BS
